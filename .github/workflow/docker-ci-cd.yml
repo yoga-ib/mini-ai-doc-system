@@ -7,8 +7,12 @@ on:
     branches: ["main"]
 
 jobs:
-  build:
+  build-and-push:
     runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
 
     steps:
       - name: Checkout repository
@@ -21,10 +25,10 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install --upgrade pip
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Basic sanity check
+      - name: Sanity check (compile)
         run: |
           python -m compileall app
 
@@ -37,8 +41,13 @@ jobs:
 
       - name: Build Docker image
         run: |
-          docker build -t ghcr.io/${{ github.repository }}:latest .
+          IMAGE_NAME=ghcr.io/${{ github.repository }}
+          docker build \
+            -t $IMAGE_NAME:latest \
+            -t $IMAGE_NAME:${{ github.sha }} .
 
       - name: Push Docker image
         run: |
-          docker push ghcr.io/${{ github.repository }}:latest
+          IMAGE_NAME=ghcr.io/${{ github.repository }}
+          docker push $IMAGE_NAME:latest
+          docker push $IMAGE_NAME:${{ github.sha }}
