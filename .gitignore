@@ -1,0 +1,5 @@
+app.db
+app/settings.py
+__pycache__/
+*.pyc
+.env

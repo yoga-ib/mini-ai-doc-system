@@ -1,0 +1,24 @@
+# Web
+fastapi
+uvicorn
+python-multipart
+python-dotenv
+
+# Database
+sqlalchemy
+
+# PDF processing
+pypdf
+
+# Numerical stability
+numpy<2
+
+# Embeddings / NLP
+sentence-transformers==2.6.1
+
+# Agent framework
+langchain
+langgraph
+
+# Vector DB
+pinecone
