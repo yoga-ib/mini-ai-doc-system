@@ -1,0 +1,34 @@
+name: CI-CD Pipeline
+
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  docker-build-push:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      - name: Build Docker image
+        run: |
+          IMAGE=ghcr.io/${{ github.repository }}
+          docker build -t $IMAGE:latest .
+
+      - name: Push Docker image
+        run: |
+          IMAGE=ghcr.io/${{ github.repository }}
+          docker push $IMAGE:latest
