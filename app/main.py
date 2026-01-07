@@ -31,6 +31,10 @@ def get_db():
         db.close()
 
 
+@app.get("/")
+def read_root():
+    return {"message": "Hello, world!"}
+
 # ---------------- Health ----------------
 @app.get("/health")
 def health():
