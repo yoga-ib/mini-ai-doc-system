@@ -33,7 +33,7 @@ def get_db():
 
 @app.get("/")
 def read_root():
-    return {"message": "Hello, world!"}
+    return {"message": "RAG application started!"}
 
 # ---------------- Health ----------------
 @app.get("/health")
