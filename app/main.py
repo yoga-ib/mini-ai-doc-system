@@ -25,7 +25,8 @@ from app.langgraph_state import GraphState
 from supabase import create_client, Client
 
 # LLm imports
-from transformers import pipeline
+from openai import OpenAI
+
 from pydantic import BaseModel
 import numpy as np
 from sentence_transformers import SentenceTransformer
@@ -34,7 +35,12 @@ load_dotenv()
 
 embed_model = SentenceTransformer("all-MiniLM-L6-v2")  # lightweight and fast
 
-llm = pipeline("text2text-generation", model="google/flan-t5-large", max_length=512)
+HF_API_KEY = os.environ.get("HF_API_KEY")
+
+client = OpenAI(
+    base_url="https://router.huggingface.co/v1",
+    api_key="***REMOVED***",
+)
 
 Base.metadata.create_all(bind=engine)
 
@@ -75,6 +81,17 @@ def get_top_k_chunks(query_embedding, k=5):
 
     similarities.sort(reverse=True, key=lambda x: x[0])
     return [c for _, c in similarities[:k]]
+
+def llm_generate(prompt: str) -> str:
+    response = client.chat.completions.create(
+    model="HuggingFaceH4/zephyr-7b-beta:featherless-ai",
+        messages=[
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.2,
+        max_tokens=256,
+    )
+    return response.choices[0].message.content.strip()
 
 
 
@@ -201,13 +218,23 @@ def ask_question(request: QueryRequest):
 
     query_embedding = embed_model.encode(query).astype(np.float32)
 
-
     top_chunks = get_top_k_chunks(query_embedding, k=5)
-    context_text = "\n\n".join([c["content"] for c in top_chunks])
+    context_text = "\n\n".join(c["content"] for c in top_chunks)
 
-    prompt = f"Answer the question based on the context below:\n\nContext:\n{context_text}\n\nQuestion: {query}\nAnswer:"
+    prompt = f"""
+        Answer the question ONLY using the context below.
+        If the answer is not in the context, say "I don't know".
 
-    answer = llm(prompt)[0]["generated_text"]
+        Context:
+        {context_text}
+
+        Question:
+        {query}
+
+        Answer:
+        """
+
+    answer = llm_generate(prompt)
 
     return {
         "query": query,
