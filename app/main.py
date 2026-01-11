@@ -39,7 +39,7 @@ HF_API_KEY = os.environ.get("HF_API_KEY")
 
 client = OpenAI(
     base_url="https://router.huggingface.co/v1",
-    api_key="***REMOVED***",
+    api_key=HF_API_KEY,
 )
 
 Base.metadata.create_all(bind=engine)
