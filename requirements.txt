@@ -22,4 +22,4 @@ langchain
 langgraph
 
 # Optional (only if using Pinecone)
-pinecone-client
+pinecone
