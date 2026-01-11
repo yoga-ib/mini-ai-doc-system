@@ -20,6 +20,7 @@ sentence-transformers==2.6.1
 # Agent / LLM
 langchain
 langgraph
+openai
 
 # Optional (only if using Pinecone)
 pinecone
