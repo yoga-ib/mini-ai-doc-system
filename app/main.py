@@ -3,6 +3,11 @@ from sqlalchemy.orm import Session
 import shutil
 import os
 import uuid
+import tempfile
+import os
+import shutil
+import ast
+from dotenv import load_dotenv 
 
 from app.database import Base, engine, SessionLocal
 from app.models import Document, DocumentChunk
@@ -16,10 +21,61 @@ from app import schemas
 from app.langgraph_flow import langgraph_app
 from app.langgraph_state import GraphState
 
+# Cloud Database imports 
+from supabase import create_client, Client
+
+# LLm imports
+from transformers import pipeline
+from pydantic import BaseModel
+import numpy as np
+from sentence_transformers import SentenceTransformer
+
+load_dotenv() 
+
+embed_model = SentenceTransformer("all-MiniLM-L6-v2")  # lightweight and fast
+
+llm = pipeline("text2text-generation", model="google/flan-t5-large", max_length=512)
 
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Mini AI Document Query System")
+
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+
+supabase : Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+def parse_embedding(embedding_str):
+    """
+    Convert string embedding from Supabase to numpy array
+    """
+    # Safely parse the string list into Python list
+    embedding_list = ast.literal_eval(embedding_str)
+    # Convert to numpy float array
+    return np.array(embedding_list, dtype=np.float32)
+
+def embed_query(text: str):
+    return embed_model.encode(text)
+
+def get_top_k_chunks(query_embedding, k=5):
+
+    data = supabase.table("documents_vectors").select("*").execute()
+    chunks = data.data
+
+    similarities = []
+    query_vec = np.array(query_embedding, dtype=np.float32)
+
+    for chunk in chunks:
+        # Parse embedding string into numeric array
+        vector = parse_embedding(chunk["embedding"])
+
+        # Cosine similarity
+        sim = np.dot(query_vec, vector) / (np.linalg.norm(query_vec) * np.linalg.norm(vector))
+        similarities.append((sim, chunk))
+
+    similarities.sort(reverse=True, key=lambda x: x[0])
+    return [c for _, c in similarities[:k]]
+
 
 
 # ---------------- DB Dependency ----------------
@@ -54,38 +110,45 @@ async def upload_file(
     db: Session = Depends(get_db)
 ):
     filename = os.path.basename(file.filename)
-    ext = filename.split(".")[-1].lower()
+    safe_filename = filename.replace(" ", "_")
+    ext = safe_filename.split(".")[-1].lower()
 
     if ext not in ["pdf", "txt"]:
-        raise HTTPException(status_code=400, detail="Only PDF or TXT files allowed")
+        raise HTTPException(400, "Only PDF or TXT files allowed")
 
-    save_path = os.path.join(UPLOAD_FOLDER, filename)
-    base, extension = os.path.splitext(save_path)
-    counter = 1
-    while os.path.exists(save_path):
-        save_path = f"{base}_{counter}{extension}"
-        counter += 1
-
-    with open(save_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    # Save temp file
+    with tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}") as tmp:
+        shutil.copyfileobj(file.file, tmp)
+        temp_path = tmp.name
 
     try:
         if ext == "pdf":
-            text = extract_text(save_path)
+            text = extract_text(temp_path)
         else:
-            with open(save_path, "r", encoding="utf-8") as f:
+            with open(temp_path, "r", encoding="utf-8") as f:
                 text = f.read()
     except Exception as e:
-        os.remove(save_path)
-        raise HTTPException(status_code=500, detail=str(e))
+        os.remove(temp_path)
+        raise HTTPException(500, f"Text extraction failed: {e}")
 
     if not text.strip():
-        os.remove(save_path)
-        raise HTTPException(status_code=400, detail="No extractable text found")
+        os.remove(temp_path)
+        raise HTTPException(400, "No extractable text found")
 
+    # Upload to Supabase Storage (correct way)
+    with open(temp_path, "rb") as f:
+        supabase.storage.from_("documents").upload(
+            safe_filename,
+            f,
+            {"content-type": file.content_type}
+        )
+
+    file_url = supabase.storage.from_("documents").get_public_url(safe_filename)
+
+    # Save document metadata
     document = Document(
-        filename=os.path.basename(save_path),
-        filepath=save_path,
+        filename=safe_filename,
+        filepath=file_url,
         status="uploaded"
     )
     db.add(document)
@@ -93,57 +156,61 @@ async def upload_file(
     db.refresh(document)
 
     chunks = chunk_text(text)
+    created_chunks = 0
 
     for i, chunk in enumerate(chunks):
         embedding = create_embedding(chunk)
         if not embedding:
             continue
 
-        vector_id = f"{document.id}_{i}_{uuid.uuid4()}"
+        # Supabase vector table
+        supabase.table("documents_vectors").insert({
+            "id": str(uuid.uuid4()),
+            "document_id": document.id,
+            "chunk_index": i,
+            "content": chunk,
+            "embedding": embedding
+        }).execute()
 
-        index.upsert(
-            vectors=[{
-                "id": vector_id,
-                "values": embedding,
-                "metadata": {
-                    "document_id": document.id,
-                    "chunk_index": i
-                }
-            }],
-            namespace=str(document.id)
-        )
-
+        # Local DB chunk table
         db_chunk = DocumentChunk(
             document_id=document.id,
             chunk_index=i,
-            chunk_text=chunk,
-            vector_id=vector_id
+            chunk_text=chunk
         )
         db.add(db_chunk)
+        created_chunks += 1
 
     db.commit()
+    os.remove(temp_path)
 
     return {
         "message": "Uploaded and indexed successfully",
         "document_id": document.id,
-        "chunks_created": len(chunks)
+        "chunks_created": created_chunks,
+        "file_url": file_url
     }
 
 
-# ---------------- Ask (LangGraph Driven) ----------------
+class QueryRequest(BaseModel):
+    query: str
+
 @app.post("/ask")
-def ask_question(query: str):
-    state: GraphState = {
-        "question": query,
-        "needs_retrieval": False,
-        "context": [],
-        "answer": ""
-    }
+def ask_question(request: QueryRequest):
+    query = request.query
 
-    final_state = langgraph_app.invoke(state)
+    query_embedding = embed_model.encode(query).astype(np.float32)
+
+
+    top_chunks = get_top_k_chunks(query_embedding, k=5)
+    context_text = "\n\n".join([c["content"] for c in top_chunks])
+
+    prompt = f"Answer the question based on the context below:\n\nContext:\n{context_text}\n\nQuestion: {query}\nAnswer:"
+
+    answer = llm(prompt)[0]["generated_text"]
 
     return {
         "query": query,
-        "answer": final_state.get("answer", ""),
-        "context": final_state.get("context", [])
+        "answer": answer,
+        "context": [c["content"] for c in top_chunks]
     }

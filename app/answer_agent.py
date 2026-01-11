@@ -1,6 +1,5 @@
 from app.langgraph_state import GraphState
 
-
 def answer_agent(state: GraphState) -> GraphState:
     context = state.get("context", [])
 
