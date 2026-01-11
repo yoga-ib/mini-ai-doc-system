@@ -8,7 +8,6 @@ pydantic
 # Database
 sqlalchemy
 psycopg2-binary
-psycopg2
 supabase
 
 # PDF processing
