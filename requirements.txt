@@ -4,23 +4,22 @@ uvicorn
 python-multipart
 python-dotenv
 pydantic
+
 # Database
 sqlalchemy
+psycopg2-binary
+supabase
 
 # PDF processing
 pypdf
 
-# Numerical stability
+# Numerical / embeddings
 numpy<2
-
-# Embeddings / NLP
 sentence-transformers==2.6.1
 
-# Agent framework
+# Agent / LLM
 langchain
 langgraph
 
-# Vector DB
-pinecone
-psycopg2
-supabase
+# Optional (only if using Pinecone)
+pinecone-client
